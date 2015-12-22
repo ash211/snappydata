@@ -78,6 +78,7 @@ object StoreUtils extends Logging {
       val prefNodeSeq = prefNodes.map(_.get).toSeq
       partitions(p) = new MultiExecutorLocalPartition(p, prefNodeSeq)
     }
+    println("For table " +   resolvedName + " the numpartitions are " + partitions.length + " numpart " + numPartitions)
     partitions
   }
 

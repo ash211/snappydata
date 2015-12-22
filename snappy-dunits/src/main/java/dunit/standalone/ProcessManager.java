@@ -140,7 +140,7 @@ public class ProcessManager {
       "-Djava.library.path=" + System.getProperty("java.library.path"),
       "-Xrunjdwp:transport=dt_socket,server=y,suspend=n",
       "-XX:+HeapDumpOnOutOfMemoryError",
-      "-Xmx512m",
+      "-Xmx1024m",
       "-XX:MaxPermSize=256M",
       "-Dgemfire.DEFAULT_MAX_OPLOG_SIZE=10",
       "-Dgemfire.disallowMcastDefaults=true",

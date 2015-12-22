@@ -34,7 +34,7 @@ test {
   dependsOn ':product'
   maxParallelForks = 1
   minHeapSize '128m'
-  maxHeapSize '1g'
+  maxHeapSize '2g'
 
   include '**/*DUnitTest.class'
 

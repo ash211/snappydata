@@ -9,7 +9,8 @@ import scala.reflect.ClassTag
  */
 object StoreFunctions {
 
-  implicit def executeWithConnection[T: ClassTag](getConnection: () => Connection, f: PartialFunction[(Connection), T], closeOnSuccess: Boolean = true): T = {
+  implicit def executeWithConnection[T: ClassTag](getConnection: () => Connection,
+      f: PartialFunction[(Connection), T], closeOnSuccess: Boolean = true): T = {
     val conn = getConnection()
     var isClosed = false;
     try {

@@ -16,37 +16,41 @@ import scala.util.Random
 class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
 
 
-  def testTableCreation(): Unit = {
+  def _testTableCreation(): Unit = {
     startSparkJob()
   }
 
-  def testCreateInsertAndDropOfTable(): Unit = {
+  def _testCreateInsertAndDropOfTable(): Unit = {
     startSparkJob2()
   }
 
-  def testCreateInsertAndDropOfTableProjectionQuery(): Unit = {
+  def _testCreateInsertAndDropOfTableProjectionQuery(): Unit = {
     startSparkJob3()
   }
 
-  def testCreateInsertAndDropOfTableWithPartition(): Unit = {
+  def _testCreateInsertAndDropOfTableWithPartition(): Unit = {
     startSparkJob4()
   }
 
-  def testCreateInsertAPI(): Unit = {
+  def _testCreateInsertAPI(): Unit = {
     startSparkJob5()
   }
 
-  def testCreateAndSingleInsertAPI(): Unit = {
+  def _testCreateAndSingleInsertAPI(): Unit = {
     startSparkJob6()
   }
 
-  def testCreateAndInsertCLOB(): Unit = {
+  def _testCreateAndInsertCLOB(): Unit = {
     startSparkJob7()
+  }
+
+  def testPerformanceColumnRowTable(): Unit = {
+    startSparkJob8()
   }
 
   // changing the test to such that batches are created
   // and looking for column table stats
-  def testSNAP205_InsertLocalBuckets(): Unit = {
+  def _testSNAP205_InsertLocalBuckets(): Unit = {
     val snc = SnappyContext(sc)
 
     var data = Seq(Seq(1, 2, 3), Seq(7, 8, 9), Seq(9, 2, 3),
@@ -404,6 +408,67 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
 
     snc.dropExternalTable("COLUMNTABLE4", ifExists = true)
     logger.info("Successful")
+  }
+
+
+  def startSparkJob8(): Unit = {
+    val snc = org.apache.spark.sql.SnappyContext(sc)
+
+    snc.sql(s"CREATE TABLE IF NOT EXISTS AIRLINE_PARQUET_SOURCE ( " +
+        "YearI INTEGER, MonthI INTEGER, DayOfMonth INTEGER," +
+        "DayOfWeek INTEGER, DepTime INTEGER, CRSDepTime INTEGER," +
+         "ArrTime INTEGER, CRSArrTime INTEGER, UniqueCarrier VARCHAR(24)," +
+         "FlightNum INTEGER, TailNum VARCHAR(25), ActualElapsedTime INTEGER," +
+         "CRSElapsedTime INTEGER, AirTime INTEGER, ArrDelay INTEGER," +
+         "DepDelay INTEGER, Origin VARCHAR(24), Dest VARCHAR(24)," +
+         "Distance INTEGER, TaxiIn INTEGER, TaxiOut INTEGER," +
+         "Cancelled INTEGER, CancellationCode VARCHAR(24), Diverted INTEGER," +
+         "CarrierDelay INTEGER, WeatherDelay INTEGER, NASDelay INTEGER," +
+         "SecurityDelay INTEGER, LateAircraftDelay INTEGER, ArrDelaySlot INTEGER)" +
+         s"USING parquet OPTIONS(path '/home/skumar/Development/snappy-commons/build-artifacts/scala-2.10/snappy/quickstart/data/airlineParquetData')")
+
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '4') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_ROW USING row OPTIONS() AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select distinct uniquecarrier from AIRLINE_PARQUET_SOURCE")
+        println("Total count spark table " + df.count)
+      }))
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select distinct uniquecarrier from AIRLINE_ROW")
+        println("Total count row " + df.count)
+      }))
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select distinct uniquecarrier from AIRLINE_COLUMN")
+        println("Total count column " + df.count)
+      }))
+
+    val region = Misc.getRegionForTable("APP.AIRLINE_COLUMN", true).asInstanceOf[PartitionedRegion]
+    val shadowRegion = Misc.getRegionForTable("APP.AIRLINE_COLUMN_SHADOW_", true).asInstanceOf[PartitionedRegion]
+
+    println("The size of buffer table is " + region.size())
+    println("The size of shadow table is " + shadowRegion.size())
+
+    snc.dropExternalTable("AIRLINE_COLUMN", ifExists = true)
+
+    snc.dropExternalTable("AIRLINE_ROW", ifExists = true)
+
+    logger.info("Successful")
+  }
+
+  def time[R](block: => R): R = {
+    val t0 = System.nanoTime()
+    val result = block    // call-by-name
+    val t1 = System.nanoTime()
+    println("Elapsed time: " + (t1 - t0)/1000000 + "ms")
+    result
   }
 }
 
