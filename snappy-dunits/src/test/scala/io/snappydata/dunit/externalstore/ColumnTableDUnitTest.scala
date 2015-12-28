@@ -427,7 +427,7 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
          "SecurityDelay INTEGER, LateAircraftDelay INTEGER, ArrDelaySlot INTEGER)" +
          s"USING parquet OPTIONS(path '/home/skumar/Development/snappy-commons/build-artifacts/scala-2.10/snappy/quickstart/data/airlineParquetData')")
 
-    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '4') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '1') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
 
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_ROW USING row OPTIONS() AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
 
