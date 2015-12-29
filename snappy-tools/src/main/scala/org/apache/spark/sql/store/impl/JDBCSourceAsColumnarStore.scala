@@ -1,34 +1,33 @@
 package org.apache.spark.sql.store.impl
 
 import java.sql.{Connection, SQLException}
+import java.util
 import java.util.{Properties, UUID}
 
-import com.gemstone.gemfire.cache.Region
-import com.gemstone.gemfire.distributed.internal.membership.InternalDistributedMember
-
 import scala.collection.JavaConverters._
-import scala.language.implicitConversions
-import com.gemstone.gemfire.internal.SocketCreator
-import com.gemstone.gemfire.internal.cache.{AbstractRegion, DistributedRegion, NoDataStoreAvailableException, PartitionedRegion}
-import com.gemstone.gemfire.internal.i18n.LocalizedStrings
-import com.pivotal.gemfirexd.internal.engine.Misc
-import com.pivotal.gemfirexd.internal.engine.distributed.utils.GemFireXDUtils
-import com.pivotal.gemfirexd.jdbc.ClientAttribute
-import io.snappydata.Constant
-import org.apache.spark.rdd.{RDD, UnionRDD}
-import org.apache.spark.sql.collection.{ExecutorLocalRDD, ExecutorLocalShellPartition, MultiExecutorLocalPartition, UUIDRegionKey, Utils}
-import org.apache.spark.sql.columnar.{CachedBatch, ConnectionType, ExternalStoreUtils}
-import org.apache.spark.sql.execution.ConnectionPool
-import org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry
-import org.apache.spark.sql.row.GemFireXDClientDialect
-import org.apache.spark.sql.store.{JDBCSourceAsStore, CachedBatchIteratorOnRS, StoreUtils}
-import org.apache.spark.storage.BlockManagerId
-import org.apache.spark.{Logging, Partition, SparkContext, TaskContext}
-
 import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 import scala.reflect.ClassTag
 import scala.util.Random
+
+import com.gemstone.gemfire.cache.Region
+import com.gemstone.gemfire.distributed.internal.membership.InternalDistributedMember
+import com.gemstone.gemfire.internal.SocketCreator
+import com.gemstone.gemfire.internal.cache.{AbstractRegion, DistributedRegion, PartitionedRegion}
+import com.pivotal.gemfirexd.internal.engine.Misc
+import com.pivotal.gemfirexd.internal.engine.distributed.utils.GemFireXDUtils
+import com.pivotal.gemfirexd.jdbc.ClientAttribute
+import io.snappydata.Constant
+
+import org.apache.spark.rdd.{RDD, UnionRDD}
+import org.apache.spark.sql.collection.{ExecutorLocalPartition, ExecutorLocalShellPartition, MultiExecutorLocalPartition, UUIDRegionKey, Utils}
+import org.apache.spark.sql.columnar.{CachedBatch, ConnectionType, ExternalStoreUtils}
+import org.apache.spark.sql.execution.ConnectionPool
+import org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry
+import org.apache.spark.sql.row.GemFireXDClientDialect
+import org.apache.spark.sql.store.{CachedBatchIteratorOnRS, JDBCSourceAsStore, StoreUtils}
+import org.apache.spark.storage.BlockManagerId
+import org.apache.spark.{Logging, Partition, SparkContext, SparkEnv, TaskContext}
 /**
  * Column Store implementation for GemFireXD.
  */
@@ -45,7 +44,9 @@ final class JDBCSourceAsColumnarStore(_url: String,
       sparkContext: SparkContext): RDD[CachedBatch] = {
     connectionType match {
       case ConnectionType.Embedded =>
-        new ColumnarStorePartitionedRDD[CachedBatch](sparkContext,
+        //new ColumnarStorePartitionedRDD[CachedBatch](sparkContext,
+        //  tableName, requiredColumns, this)
+        new ColumnarStoreLocalExecutorRDD[CachedBatch](sparkContext,
           tableName, requiredColumns, this)
       case _ =>
         if (ExternalStoreUtils.isExternalShellMode(sparkContext)) {
@@ -148,32 +149,75 @@ final class JDBCSourceAsColumnarStore(_url: String,
   }
 }
 
+class LocalBucketSetPartition(override val index: Int,
+    override val blockId: BlockManagerId, val bucketSet: Set[Int])
+    extends ExecutorLocalPartition(index, blockId) {
+
+}
+
 class ColumnarStoreLocalExecutorRDD[T: ClassTag](@transient _sc: SparkContext,
     tableName: String,
     requiredColumns: Array[String], store: JDBCSourceAsColumnarStore)
-    extends ExecutorLocalRDD[CachedBatch](_sc, Nil) with Logging {
+    extends RDD[CachedBatch](_sc, Nil) {
 
-  override def computeFunction(split: Partition, context: TaskContext): Iterator[CachedBatch] = {
+  override def getPartitions: Array[Partition] = {
+    val numberedPeers = Utils.getAllExecutorsMemoryStatus(sparkContext).
+        keySet.zipWithIndex
+
+    if (numberedPeers.nonEmpty) {
+      numberedPeers.map {
+        case (bid, idx) => createPartition(idx, bid)
+      }.toArray[Partition]
+    } else {
+      Array.empty[Partition]
+    }
+  }
+
+  def createPartition(index: Int,
+      blockId: BlockManagerId): ExecutorLocalPartition = {
+    new LocalBucketSetPartition(index, blockId, Set.empty[Int])
+  }
+
+  override def getPreferredLocations(split: Partition): Seq[String] =
+    Seq(split.asInstanceOf[LocalBucketSetPartition].hostExecutorId)
+
+  override def compute(split: Partition, context: TaskContext): Iterator[CachedBatch] = {
+    val part = split.asInstanceOf[LocalBucketSetPartition]
+    val thisBlockId = SparkEnv.get.blockManager.blockManagerId
+    if (part.blockId != thisBlockId) {
+      throw new IllegalStateException(
+        s"Unexpected execution of $part on $thisBlockId")
+    }
+
     store.tryExecute(tableName, {
       case conn =>
         val resolvedName = StoreUtils.lookupName(tableName, conn.getSchema)
-        val par = split.index
-        val ps1 = conn.prepareStatement(
-          "call sys.SET_BUCKETS_FOR_LOCAL_EXECUTION(?, ?)")
-        ps1.setString(1, resolvedName)
-        ps1.setInt(2, par)
-        ps1.execute()
+        Misc.getRegionForTable(resolvedName, true).asInstanceOf[Region[_, _]] match {
+          case pr: PartitionedRegion =>
+            val localBuckets = pr.getDataStore.getAllLocalBucketIds
+            if (localBuckets.isEmpty) {
+              return Iterator.empty
+            }
+            val par = localBuckets.toArray().mkString(",")
+            //println(" the query is " + s"call sys.SET_BUCKETSET_FOR_LOCAL_EXECUTION('$resolvedName', '$par')")
 
-        val ps = conn.prepareStatement("select " + requiredColumns.mkString(
-          ", ") + ", numRows, stats from " + tableName)
 
-        val rs = ps.executeQuery()
-        ps1.close()
-        new CachedBatchIteratorOnRS(conn, requiredColumns, ps, rs)
+            //println("The procedure local bucket execution is " + par + " size of pr is " + pr.size)
+
+            val ps1 = conn.prepareStatement(s"call sys.SET_BUCKETSET_FOR_LOCAL_EXECUTION('$resolvedName', '$par')")
+            ps1.execute()
+
+            val ps = conn.prepareStatement("select " + requiredColumns.mkString(
+              ", ") + ", numRows, stats from " + tableName)
+
+            val rs = ps.executeQuery()
+            ps1.close()
+            println("executed query for select")
+            new CachedBatchIteratorOnRS(conn, requiredColumns, ps, rs)
+        }
     }, closeOnSuccess = false)
   }
 }
-
 
 class ColumnarStorePartitionedRDD[T: ClassTag](@transient _sc: SparkContext,
     tableName: String,

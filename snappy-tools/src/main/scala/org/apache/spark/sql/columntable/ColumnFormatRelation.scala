@@ -18,7 +18,7 @@ import org.apache.spark.sql.execution.datasources.jdbc.{JDBCPartition, JDBCRDD, 
 import org.apache.spark.sql.hive.SnappyStoreHiveCatalog
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.row.GemFireXDDialect
-import org.apache.spark.sql.rowtable.RowFormatScanRDD
+import org.apache.spark.sql.rowtable.{RowFormatLocalExecutorScanRDD, RowFormatScanRDD}
 import org.apache.spark.sql.sources.{JdbcExtendedDialect, _}
 import org.apache.spark.sql.store.StoreFunctions._
 import org.apache.spark.sql.store.impl.JDBCSourceAsColumnarStore
@@ -104,7 +104,7 @@ class ColumnFormatRelation(
     // TODO: can we optimize the union by providing partitioner
     val union = connectionType match {
       case ConnectionType.Embedded => {
-        val rowRdd = new RowFormatScanRDD(
+        val rowRdd = new RowFormatLocalExecutorScanRDD(
           sqlContext.sparkContext,
           connector,
           ExternalStoreUtils.pruneSchema(schemaFields, requiredColumns),

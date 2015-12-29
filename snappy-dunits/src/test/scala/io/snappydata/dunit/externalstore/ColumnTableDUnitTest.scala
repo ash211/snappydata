@@ -427,10 +427,7 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
          "SecurityDelay INTEGER, LateAircraftDelay INTEGER, ArrDelaySlot INTEGER)" +
          s"USING parquet OPTIONS(path '/home/skumar/Development/snappy-commons/build-artifacts/scala-2.10/snappy/quickstart/data/airlineParquetData')")
 
-    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '1') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
-
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_ROW USING row OPTIONS() AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
-
 
     (1 until 5).foreach(_ =>
       time({
@@ -468,29 +465,38 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
       }))
 
 
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '1') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
 
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '2') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '3') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '4') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '5') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '10') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '20') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '40') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
+
     snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
     snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '113') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
     fireQuery(snc)
@@ -502,22 +508,39 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
   }
 
   def fireQuery(snc: SnappyContext): Unit = {
-    (1 until 5).foreach(_ =>
-      time({
+    var totalTime = 0L
+    (1 until 5).foreach(_ => {
+      val t = time({
         val df = snc.sql("select distinct uniquecarrier from AIRLINE_COLUMN")
         println("Total count column (distrinct)" + df.count)
-      }))
-    (1 until 5).foreach(_ =>
-      time({
+      })
+      totalTime = totalTime + t._2
+    })
+
+    println("Avg time taken for distinct query " + totalTime / 4)
+
+
+    totalTime = 0L
+    (1 until 5).foreach(_ => {
+      val t = time({
         val df = snc.sql("select count(*) from AIRLINE_COLUMN")
         println("Total count column(count*) " + df.count)
-      }))
+      })
+      totalTime = totalTime + t._2
+    })
 
-    (1 until 5).foreach(_ =>
-      time({
+    println("Avg time taken for count(*) query " + totalTime / 4)
+
+    totalTime = 0L
+    (1 until 5).foreach(_ => {
+      val t = time({
         val df = snc.sql("select * from AIRLINE_COLUMN")
         println("Total count column " + df.count)
-      }))
+      })
+      totalTime = totalTime + t._2
+    })
+
+    println("Avg time taken for select * query " + totalTime / 4)
 
     val region = Misc.getRegionForTable("APP.AIRLINE_COLUMN", true).asInstanceOf[PartitionedRegion]
     val shadowRegion = Misc.getRegionForTable("APP.AIRLINE_COLUMN_SHADOW_", true).asInstanceOf[PartitionedRegion]
@@ -526,12 +549,12 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
     println("The size of shadow table is " + shadowRegion.size())
   }
 
-  def time[R](block: => R): R = {
+  def time[R](block: => R): (R, Long) = {
     val t0 = System.nanoTime()
     val result = block    // call-by-name
     val t1 = System.nanoTime()
-    println("Elapsed time: " + (t1 - t0)/1000000 + "ms")
-    result
+    //println("Elapsed time: " + (t1 - t0)/1000000 + "ms")
+    (result, (t1 - t0)/1000000)
   }
 }
 

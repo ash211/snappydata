@@ -11,11 +11,12 @@ import org.apache.commons.lang3.StringUtils
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.SpecificMutableRow
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
-import org.apache.spark.sql.collection.MultiExecutorLocalPartition
+import org.apache.spark.sql.collection.{ExecutorLocalPartition, MultiExecutorLocalPartition, Utils}
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCRDD
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.store.StoreFunctions._
 import org.apache.spark.sql.store.StoreUtils
+import org.apache.spark.sql.store.impl.LocalBucketSetPartition
 import org.apache.spark.sql.types.{Decimal, StructType}
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.unsafe.types.UTF8String
@@ -82,28 +83,33 @@ class RowFormatScanRDD(@transient sc: SparkContext,
   /**
    * Runs the SQL query against the JDBC driver.
    */
-  override def compute(thePart: Partition, context: TaskContext): Iterator[InternalRow] =
+  override def compute(thePart: Partition, context: TaskContext): Iterator[InternalRow] = {
+    val conn = getConnection()
+    val resolvedName = StoreUtils.lookupName(tableName, conn.getSchema)
+    val region = Misc.getRegionForTable(resolvedName, true)
+    if (region.isInstanceOf[PartitionedRegion]) {
+      val pr = region.asInstanceOf[PartitionedRegion]
+      val localBuckets = pr.getDataStore.getAllLocalBucketIds
+      if (localBuckets.isEmpty) {
+        conn.close()
+        return Iterator.empty
+      }
+    }
 
     new Iterator[InternalRow] {
       var closed = false
       var finished = false
       var gotNext = false
       var nextValue: InternalRow = null
-
       context.addTaskCompletionListener { context => close() }
-      val part = thePart.asInstanceOf[MultiExecutorLocalPartition]
-      val conn = getConnection()
-
-      val resolvedName = StoreUtils.lookupName(tableName, conn.getSchema)
-      val region = Misc.getRegionForTable(resolvedName, true)
-
       if (region.isInstanceOf[PartitionedRegion]) {
-        val par = part.index
-        val ps1 = conn.prepareStatement(s"call sys.SET_BUCKETS_FOR_LOCAL_EXECUTION('$resolvedName', $par)")
+        val pr = region.asInstanceOf[PartitionedRegion]
+        val localBuckets = pr.getDataStore.getAllLocalBucketIds
+        val par = localBuckets.toArray().mkString(",")
+        println("The procedure local bucket execution is row " + par)
+        val ps1 = conn.prepareStatement(s"call sys.SET_BUCKETSET_FOR_LOCAL_EXECUTION('$resolvedName', '$par')")
         ps1.execute()
       }
-
-
       // H2's JDBC driver does not support the setSchema() method.  We pass a
       // fully-qualified table name in the SELECT statement.  I don't know how to
       // talk about a table in a completely portable way.
@@ -231,6 +237,7 @@ class RowFormatScanRDD(@transient sc: SparkContext,
         nextValue
       }
     }
+  }
 
   override def getPreferredLocations(split: Partition): Seq[String] = {
     split.asInstanceOf[MultiExecutorLocalPartition].hostExecutorIds
@@ -249,4 +256,48 @@ class RowFormatScanRDD(@transient sc: SparkContext,
         }
     })
   }
+}
+
+class RowFormatLocalExecutorScanRDD(@transient sc: SparkContext,
+    getConnection: () => Connection,
+    schema: StructType,
+    tableName: String,
+    columns: Array[String],
+    filters: Array[Filter],
+    partitions: Array[Partition],
+    blockMap: Map[InternalDistributedMember, BlockManagerId],
+    properties: Properties) extends RowFormatScanRDD(sc, getConnection, schema, tableName,
+  columns, filters, partitions, blockMap, properties) {
+
+  override def getPreferredLocations(split: Partition): Seq[String] =
+    Seq(split.asInstanceOf[LocalBucketSetPartition].hostExecutorId)
+
+  override def getPartitions: Array[Partition] = {
+    executeWithConnection(getConnection, {
+      case conn =>
+        val tableSchema = conn.getSchema
+        val resolvedName = StoreUtils.lookupName(tableName, tableSchema)
+        val region = Misc.getRegionForTable(resolvedName, true)
+
+        val numberedPeers = Utils.getAllExecutorsMemoryStatus(sparkContext).
+            keySet.zipWithIndex
+        if (region.isInstanceOf[PartitionedRegion]) {
+          if (numberedPeers.nonEmpty) {
+            numberedPeers.map {
+              case (bid, idx) => createPartition(idx, bid)
+            }.toArray[Partition]
+          } else {
+            Array.empty[Partition]
+          }
+        } else {
+          StoreUtils.getPartitionsReplicatedTable(sc, resolvedName, tableSchema, blockMap)
+        }
+    })
+  }
+
+  def createPartition(index: Int,
+      blockId: BlockManagerId): ExecutorLocalPartition = {
+    new LocalBucketSetPartition(index, blockId, Set.empty[Int])
+  }
+
 }
