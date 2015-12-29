@@ -437,6 +437,17 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
         val df = snc.sql("select distinct uniquecarrier from AIRLINE_PARQUET_SOURCE")
         println("Total count spark table " + df.count)
       }))
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select count(*) from AIRLINE_PARQUET_SOURCE")
+        println("Total count column(count*) " + df.count)
+      }))
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select * from AIRLINE_PARQUET_SOURCE")
+        println("Total count column " + df.count)
+      }))
 
     (1 until 5).foreach(_ =>
       time({
@@ -446,7 +457,65 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
 
     (1 until 5).foreach(_ =>
       time({
+        val df = snc.sql("select count(*) from AIRLINE_ROW")
+        println("Total count column(count*) " + df.count)
+      }))
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select * from AIRLINE_ROW")
+        println("Total count column " + df.count)
+      }))
+
+
+    fireQuery(snc)
+
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '2') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '3') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '4') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '5') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '10') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '20') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '40') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+    snc.sql("DROP TABLE IF EXISTS AIRLINE_COLUMN")
+    snc.sql("CREATE TABLE IF NOT EXISTS AIRLINE_COLUMN USING column OPTIONS(BUCKETS '113') AS (SELECT * FROM AIRLINE_PARQUET_SOURCE)")
+    fireQuery(snc)
+
+    snc.dropExternalTable("AIRLINE_COLUMN", ifExists = true)
+    snc.dropExternalTable("AIRLINE_ROW", ifExists = true)
+
+    logger.info("Successful")
+  }
+
+  def fireQuery(snc: SnappyContext): Unit = {
+    (1 until 5).foreach(_ =>
+      time({
         val df = snc.sql("select distinct uniquecarrier from AIRLINE_COLUMN")
+        println("Total count column (distrinct)" + df.count)
+      }))
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select count(*) from AIRLINE_COLUMN")
+        println("Total count column(count*) " + df.count)
+      }))
+
+    (1 until 5).foreach(_ =>
+      time({
+        val df = snc.sql("select * from AIRLINE_COLUMN")
         println("Total count column " + df.count)
       }))
 
@@ -455,12 +524,6 @@ class ColumnTableDUnitTest(s: String) extends ClusterManagerTestBase(s) {
 
     println("The size of buffer table is " + region.size())
     println("The size of shadow table is " + shadowRegion.size())
-
-    snc.dropExternalTable("AIRLINE_COLUMN", ifExists = true)
-
-    snc.dropExternalTable("AIRLINE_ROW", ifExists = true)
-
-    logger.info("Successful")
   }
 
   def time[R](block: => R): R = {

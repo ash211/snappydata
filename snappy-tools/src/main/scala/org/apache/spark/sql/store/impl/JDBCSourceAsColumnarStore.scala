@@ -16,7 +16,7 @@ import com.pivotal.gemfirexd.internal.engine.distributed.utils.GemFireXDUtils
 import com.pivotal.gemfirexd.jdbc.ClientAttribute
 import io.snappydata.Constant
 import org.apache.spark.rdd.{RDD, UnionRDD}
-import org.apache.spark.sql.collection.{ExecutorLocalShellPartition, MultiExecutorLocalPartition, UUIDRegionKey, Utils}
+import org.apache.spark.sql.collection.{ExecutorLocalRDD, ExecutorLocalShellPartition, MultiExecutorLocalPartition, UUIDRegionKey, Utils}
 import org.apache.spark.sql.columnar.{CachedBatch, ConnectionType, ExternalStoreUtils}
 import org.apache.spark.sql.execution.ConnectionPool
 import org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry
@@ -147,6 +147,33 @@ final class JDBCSourceAsColumnarStore(_url: String,
     }
   }
 }
+
+class ColumnarStoreLocalExecutorRDD[T: ClassTag](@transient _sc: SparkContext,
+    tableName: String,
+    requiredColumns: Array[String], store: JDBCSourceAsColumnarStore)
+    extends ExecutorLocalRDD[CachedBatch](_sc, Nil) with Logging {
+
+  override def computeFunction(split: Partition, context: TaskContext): Iterator[CachedBatch] = {
+    store.tryExecute(tableName, {
+      case conn =>
+        val resolvedName = StoreUtils.lookupName(tableName, conn.getSchema)
+        val par = split.index
+        val ps1 = conn.prepareStatement(
+          "call sys.SET_BUCKETS_FOR_LOCAL_EXECUTION(?, ?)")
+        ps1.setString(1, resolvedName)
+        ps1.setInt(2, par)
+        ps1.execute()
+
+        val ps = conn.prepareStatement("select " + requiredColumns.mkString(
+          ", ") + ", numRows, stats from " + tableName)
+
+        val rs = ps.executeQuery()
+        ps1.close()
+        new CachedBatchIteratorOnRS(conn, requiredColumns, ps, rs)
+    }, closeOnSuccess = false)
+  }
+}
+
 
 class ColumnarStorePartitionedRDD[T: ClassTag](@transient _sc: SparkContext,
     tableName: String,
